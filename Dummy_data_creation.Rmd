@@ -1,0 +1,173 @@
+
+##PREPARATORY STEPS
+
+```{r}
+
+#Load packages
+
+pckgs <- c("dplyr","RPostgreSQL","data.table","tidyr","rgdal","sp","httr","jsonlite","jsonlite","ggplot2","RMySQL")
+lapply(pckgs, require, character.only=T)
+
+#Check API is alive (should return "hello" if successful)
+
+r<- GET("https://api.witanforcities.com/healthcheck")
+content(r,"text")
+
+##Login to CDS API and retrieve API tokens using api_tokens function
+
+#set your wd here
+
+
+
+# define your inputs
+
+user<-read.csv("user_details.csv") # user can reference a file containing log-on details
+u_name <- as.character(user$username) # user can input their details directly
+p_word <- as.character(user$password)
+
+# open function that does the above
+source("api_tokens.R") 
+
+# run function
+tokens <- api_tokens.fun(u_name,p_word) 
+
+auth_token <- tokens$auth
+refresh_token <- tokens$refresh
+
+```
+
+##UPLOAD FILE(S) TO CITY DATASTORE##
+
+```{r}
+
+# define your inputs
+give_file_location <-  as.character(paste(getwd(),"/Dummy_data_point.csv",sep=""))
+
+#give_file_location <-  ("Q:/Teams/D&PA/Crime/New Safestats/Workplan 2017_18/SafeStats2 development/Workstreams/Infrastructure/Data load testing/Dummy_data_point.csv")
+
+give_size_of_file <- as.integer(6916)
+give_name_of_file <- "Dummy_data_point5"
+
+# open function that does the above
+source("upload_to_api.R") 
+
+# run function
+upload_to_api.fun(give_file_location,give_size_of_file,give_name_of_file) 
+
+```
+
+##DOWNLOAD FILE LIST FROM CITY DATASTORE##
+
+```{r}
+
+# define your inputs
+file_count <- 10
+
+# open function that does the above
+source("download_file_list.R")
+
+# run function
+datasets <- download_file_list.fun(file_count)
+
+datasets
+
+# see file list below:
+
+```
+
+##DOWNLOAD FILE FROM CITY DATASTORE##
+
+```{r}
+
+# define your inputs
+file_row <- 4
+work_dir <- getwd()
+
+# open function that does the above
+source("download_file.R")
+
+# run function & download file (into folder & R)
+downloaded_file <- download_file.fun(file_row,work_dir,datasets)
+downloaded_file <- fread(downloaded_file$file_url)
+
+# if repeating this process for multiple files, change row input and rename 'downloaded_file' below before rerunning:
+data_point <- downloaded_file
+
+```
+
+##STEP 4##
+##PREPARE DATA FOR UPLOAD TO DATABASE (replace with whatever manipulation function you require) #
+
+```{r}
+
+##Ive done this with 3 dummy crime files at point, ward and borough levels which I want to append to one another
+
+# check input data
+
+grouped <- summarise(group_by(data_ward, Provider, Month), Crime_sum=sum(CrimeCount), Crime_n=n())
+              
+p <-ggplot(grouped, aes(Provider, Crime_sum, Crime_n))
+p + geom_bar(stat = "identity")
+
+# open function that does the manipulation
+source("data_manipulation.R")
+
+# run function
+df <- data_manipulation.fun(data_point, data_ward, data_borough)
+
+```
+
+
+##STEP 5##
+##UPLOAD DATA TO POSTGRES DATABASE###
+
+```{r}
+
+# input user parameters for connection
+db<-read.csv("db_details.csv") # user can reference a file containing log-on details
+
+server_name <- as.character(db$server_name) # user can input their details directly
+server_port <- as.character(db$server_port)
+db_name <- as.character(db$db_name)
+db_user <- as.character(db$db_user)
+db_password <- as.character(db$db_password)
+
+# open db connection 
+drv<-dbDriver("PostgreSQL")
+con <- dbConnect(drv, dbname = db_name, host = server_name, port = server_port, user = db_user, password = db_password)
+rm(db_password) # removes the password
+
+# input user parameters for target db table
+db_table <- {"Dummy_data_raw"}
+data_to_upload <- df
+
+# append to db table
+dbWriteTable(con,db_table,data_to_upload,append=TRUE,row.names=FALSE) # write table to db (check overwrite/append)
+
+# close the db connection if not doing anything further with the db
+#dbDisconnect(con)
+#dbUnloadDriver(drv)
+
+```
+
+
+##STEP 6##
+##DOWNLOAD DATA FROM POSTGRES DATABASE#
+
+```{r}
+# query the data from postgreSQL 
+
+df_postgres <- dbGetQuery(con, 'SELECT * from safestats."Dummy_data_raw"')
+
+# do any other manipulation here
+
+df_postgres <- summarise(group_by(data_ward, Provider, Month), Crime_sum=sum(CrimeCount), Crime_n=n())
+              
+p <-ggplot(df_postgres, aes(Provider, Crime_sum, Crime_n))
+p + geom_bar(stat = "identity")
+
+# close the db connection if not doing anything further with the db
+#dbDisconnect(con)
+#dbUnloadDriver(drv)
+
+```
